@@ -47,3 +47,26 @@ type ResourceTransformResult struct {
 // of the original call to the `Resource` constructor.  If the transform returns nil,
 // this indicates that the resource will not be transformed.
 type ResourceTransform func(context.Context, *ResourceTransformArgs) *ResourceTransformResult
+
+// InvokeTransformArgs is the argument bag passed to a invoke transform.
+type InvokeTransformArgs struct {
+	// The token of the invoke.
+	Token string
+	// The original args passed to the resource constructor.
+	Args Map
+	// The original invoke options passed to the resource constructor.
+	Opts InvokeOptions
+}
+
+// InvokeTransformResult is the result that must be returned by a invoke transform
+// callback. It includes new values to use for the `args` and `opts` of the `Invoke` in place of
+// the originally provided values.
+type InvokeTransformResult struct {
+	// The new args to use in place of the original `args`.
+	Args Map
+	// The new invoke options to use in place of the original `opts`.
+	Opts InvokeOptions
+}
+
+// TODO: docs
+type InvokeTransform func(context.Context, *InvokeTransformArgs) *InvokeTransformResult

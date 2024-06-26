@@ -321,6 +321,7 @@ export async function awaitStackRegistrations(): Promise<void> {
     const store = getStore();
     const callbacks = store.callbacks;
     if (callbacks === undefined) {
+	console.log("no callbacks");
         return;
     }
     return await callbacks.awaitStackRegistrations();

@@ -8,6 +8,8 @@ package pulumirpc
 
 import (
 	context "context"
+	"fmt"
+
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
@@ -31,6 +33,7 @@ type ResourceMonitorClient interface {
 	RegisterResource(ctx context.Context, in *RegisterResourceRequest, opts ...grpc.CallOption) (*RegisterResourceResponse, error)
 	RegisterResourceOutputs(ctx context.Context, in *RegisterResourceOutputsRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RegisterStackTransform(ctx context.Context, in *Callback, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	RegisterInvokeTransform(ctx context.Context, in *Callback, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RegisterPackage(ctx context.Context, in *RegisterPackageRequest, opts ...grpc.CallOption) (*RegisterPackageResponse, error)
 }
 
@@ -137,6 +140,15 @@ func (c *resourceMonitorClient) RegisterStackTransform(ctx context.Context, in *
 	return out, nil
 }
 
+func (c *resourceMonitorClient) RegisterInvokeTransform(ctx context.Context, in *Callback, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/pulumirpc.ResourceMonitor/RegisterInvokeTransform", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *resourceMonitorClient) RegisterPackage(ctx context.Context, in *RegisterPackageRequest, opts ...grpc.CallOption) (*RegisterPackageResponse, error) {
 	out := new(RegisterPackageResponse)
 	err := c.cc.Invoke(ctx, "/pulumirpc.ResourceMonitor/RegisterPackage", in, out, opts...)
@@ -158,6 +170,7 @@ type ResourceMonitorServer interface {
 	RegisterResource(context.Context, *RegisterResourceRequest) (*RegisterResourceResponse, error)
 	RegisterResourceOutputs(context.Context, *RegisterResourceOutputsRequest) (*emptypb.Empty, error)
 	RegisterStackTransform(context.Context, *Callback) (*emptypb.Empty, error)
+	RegisterInvokeTransform(context.Context, *Callback) (*emptypb.Empty, error)
 	RegisterPackage(context.Context, *RegisterPackageRequest) (*RegisterPackageResponse, error)
 	mustEmbedUnimplementedResourceMonitorServer()
 }
@@ -189,6 +202,9 @@ func (UnimplementedResourceMonitorServer) RegisterResourceOutputs(context.Contex
 }
 func (UnimplementedResourceMonitorServer) RegisterStackTransform(context.Context, *Callback) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterStackTransform not implemented")
+}
+func (UnimplementedResourceMonitorServer) RegisterInvokeTransform(context.Context, *Callback) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterInvokeTransform not implemented")
 }
 func (UnimplementedResourceMonitorServer) RegisterPackage(context.Context, *RegisterPackageRequest) (*RegisterPackageResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterPackage not implemented")
@@ -225,6 +241,7 @@ func _ResourceMonitor_SupportsFeature_Handler(srv interface{}, ctx context.Conte
 }
 
 func _ResourceMonitor_Invoke_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	fmt.Println("Invoke handler")
 	in := new(ResourceInvokeRequest)
 	if err := dec(in); err != nil {
 		return nil, err
@@ -353,6 +370,24 @@ func _ResourceMonitor_RegisterStackTransform_Handler(srv interface{}, ctx contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ResourceMonitor_RegisterInvokeTransform_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Callback)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ResourceMonitorServer).RegisterInvokeTransform(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/pulumirpc.ResourceMonitor/RegisterInvokeTransform",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ResourceMonitorServer).RegisterInvokeTransform(ctx, req.(*Callback))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _ResourceMonitor_RegisterPackage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RegisterPackageRequest)
 	if err := dec(in); err != nil {
@@ -405,6 +440,10 @@ var ResourceMonitor_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RegisterStackTransform",
 			Handler:    _ResourceMonitor_RegisterStackTransform_Handler,
+		},
+		{
+			MethodName: "RegisterInvokeTransform",
+			Handler:    _ResourceMonitor_RegisterInvokeTransform_Handler,
 		},
 		{
 			MethodName: "RegisterPackage",

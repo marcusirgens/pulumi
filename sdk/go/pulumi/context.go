@@ -61,15 +61,16 @@ type contextState struct {
 	callbacksLock sync.Mutex
 	callbacks     *callbackServer
 
-	keepResources       bool       // true if resources should be marshaled as strongly-typed references.
-	keepOutputValues    bool       // true if outputs should be marshaled as strongly-type output values.
-	supportsDeletedWith bool       // true if deletedWith supported by pulumi
-	supportsAliasSpecs  bool       // true if full alias specification is supported by pulumi
-	supportsTransforms  bool       // true if remote transforms are supported by pulumi
-	rpcs                int        // the number of outstanding RPC requests.
-	rpcsDone            *sync.Cond // an event signaling completion of RPCs.
-	rpcsLock            sync.Mutex // a lock protecting the RPC count and event.
-	rpcError            error      // the first error (if any) encountered during an RPC.
+	keepResources            bool       // true if resources should be marshaled as strongly-typed references.
+	keepOutputValues         bool       // true if outputs should be marshaled as strongly-type output values.
+	supportsDeletedWith      bool       // true if deletedWith supported by pulumi
+	supportsAliasSpecs       bool       // true if full alias specification is supported by pulumi
+	supportsTransforms       bool       // true if remote transforms are supported by pulumi
+	supportsInvokeTransforms bool       // true if remote invoke transforms are supported by pulumi
+	rpcs                     int        // the number of outstanding RPC requests.
+	rpcsDone                 *sync.Cond // an event signaling completion of RPCs.
+	rpcsLock                 sync.Mutex // a lock protecting the RPC count and event.
+	rpcError                 error      // the first error (if any) encountered during an RPC.
 
 	join workGroup // the waitgroup for non-RPC async work associated with this context
 }
@@ -162,18 +163,24 @@ func NewContext(ctx context.Context, info RunInfo) (*Context, error) {
 		return nil, err
 	}
 
+	supportsInvokeTransforms, err := supportsFeature("invokeTransforms")
+	if err != nil {
+		return nil, err
+	}
+
 	contextState := &contextState{
-		info:                info,
-		exports:             make(map[string]Input),
-		monitorConn:         monitorConn,
-		monitor:             monitor,
-		engineConn:          engineConn,
-		engine:              engine,
-		keepResources:       keepResources,
-		keepOutputValues:    keepOutputValues,
-		supportsDeletedWith: supportsDeletedWith,
-		supportsAliasSpecs:  supportsAliasSpecs,
-		supportsTransforms:  supportsTransforms,
+		info:                     info,
+		exports:                  make(map[string]Input),
+		monitorConn:              monitorConn,
+		monitor:                  monitor,
+		engineConn:               engineConn,
+		engine:                   engine,
+		keepResources:            keepResources,
+		keepOutputValues:         keepOutputValues,
+		supportsDeletedWith:      supportsDeletedWith,
+		supportsAliasSpecs:       supportsAliasSpecs,
+		supportsTransforms:       supportsTransforms,
+		supportsInvokeTransforms: supportsInvokeTransforms,
 	}
 	contextState.rpcsDone = sync.NewCond(&contextState.rpcsLock)
 	context := &Context{
@@ -523,6 +530,124 @@ func (ctx *Context) registerTransform(t ResourceTransform) (*pulumirpc.Callback,
 	return cb, nil
 }
 
+// registerTransform starts up a callback server if not already running and registers the given transform.
+func (ctx *Context) registerInvokeTransform(t InvokeTransform) (*pulumirpc.Callback, error) {
+	if !ctx.state.supportsInvokeTransforms {
+		return nil, errors.New("the Pulumi CLI does not support invoke transforms. Please update the Pulumi CLI")
+	}
+
+	// Wrap the transform in a callback function.
+	callback := func(innerCtx context.Context, req []byte) (proto.Message, error) {
+		var rpcReq pulumirpc.TransformInvokeRequest
+		if err := proto.Unmarshal(req, &rpcReq); err != nil {
+			return nil, fmt.Errorf("unmarshaling request: %w", err)
+		}
+
+		// Unmarshal the resource inputs.
+		args, err := plugin.UnmarshalProperties(rpcReq.Args, plugin.MarshalOptions{
+			KeepUnknowns:     true,
+			KeepSecrets:      true,
+			KeepResources:    true,
+			KeepOutputValues: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("unmarshaling transform protobuf properties: %w", err)
+		}
+
+		unmarshalledArgs, err := unmarshalPropertyMap(ctx, args)
+		if err != nil {
+			return nil, fmt.Errorf("unmarshaling transform properties: %w", err)
+		}
+
+		var opts InvokeOptions
+		if rpcReq.Options != nil {
+			if rpcReq.Options.Provider != "" {
+				opts.Provider = ctx.newDependencyProviderResourceFromRef(rpcReq.Options.Provider)
+			}
+			opts.Version = rpcReq.Options.Version
+			opts.PluginDownloadURL = rpcReq.Options.PluginDownloadUrl
+		}
+
+		transformArgs := &InvokeTransformArgs{
+			Token: rpcReq.Token,
+			Args:  unmarshalledArgs,
+			Opts:  opts,
+		}
+
+		res := t(innerCtx, transformArgs)
+		rpcRes := &pulumirpc.TransformInvokeResponse{
+			Args:    nil,
+			Options: nil,
+		}
+
+		if res != nil {
+			opts := res.Opts
+
+			umArgs := res.Args
+			if umArgs == nil {
+				umArgs = Map{}
+			}
+			mArgs, _, err := marshalInput(umArgs, anyType, true)
+			if err != nil {
+				return nil, fmt.Errorf("marshaling properties: %w", err)
+			}
+
+			args = resource.PropertyMap{}
+			if mArgs.IsObject() {
+				args = mArgs.ObjectValue()
+			}
+
+			rpcRes.Args, err = plugin.MarshalProperties(
+				args,
+				plugin.MarshalOptions{
+					KeepUnknowns:  true,
+					KeepSecrets:   true,
+					KeepResources: ctx.state.keepResources,
+				},
+			)
+			if err != nil {
+				return nil, fmt.Errorf("marshaling properties: %w", err)
+			}
+
+			rpcRes.Options = &pulumirpc.TransformInvokeOptions{}
+			rpcRes.Options.PluginDownloadUrl = opts.PluginDownloadURL
+
+			if opts.Provider != nil {
+				rpcRes.Options.Provider, err = ctx.resolveProviderReference(opts.Provider)
+				if err != nil {
+					return nil, fmt.Errorf("marshaling provider: %w", err)
+				}
+			}
+			rpcRes.Options.Version = opts.Version
+		}
+
+		return rpcRes, nil
+	}
+
+	err := func() error {
+		ctx.state.callbacksLock.Lock()
+		defer ctx.state.callbacksLock.Unlock()
+		if ctx.state.callbacks == nil {
+			c, err := newCallbackServer()
+			if err != nil {
+				return fmt.Errorf("creating callback server: %w", err)
+			}
+			ctx.state.callbacks = c
+		}
+		return nil
+	}()
+	if err != nil {
+		return nil, err
+	}
+
+	cb, err := ctx.state.callbacks.RegisterCallback(callback)
+	if err != nil {
+		return nil, fmt.Errorf("registering callback: %w", err)
+	}
+
+	return cb, nil
+}
+
 // Invoke will invoke a provider's function, identified by its token tok. This function call is synchronous.
 //
 // args and result must be pointers to struct values fields and appropriately tagged and typed for use with Pulumi.
@@ -590,6 +715,7 @@ func (ctx *Context) Invoke(tok string, args interface{}, result interface{}, opt
 
 	// Now, invoke the RPC to the provider synchronously.
 	logging.V(9).Infof("Invoke(%s, #args=%d): RPC call being made synchronously", tok, len(resolvedArgsMap))
+	fmt.Println("calling invoke", tok)
 	resp, err := ctx.state.monitor.Invoke(ctx.ctx, &pulumirpc.ResourceInvokeRequest{
 		Tok:               tok,
 		Args:              rpcArgs,
@@ -2134,6 +2260,19 @@ func (ctx *Context) RegisterResourceTransform(t ResourceTransform) error {
 // Deprecated: Use RegisterResourceTransform instead.
 func (ctx *Context) RegisterStackTransform(t ResourceTransform) error {
 	return ctx.RegisterResourceTransform(t)
+}
+
+// RegisterInvokeTransform adds a transform to all future invokes in this Pulumi stack.
+func (ctx *Context) RegisterInvokeTransform(t InvokeTransform) error {
+	fmt.Println("calling RegisterInvokeTransform1")
+	cb, err := ctx.registerInvokeTransform(t)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("calling registerInvokeTransform")
+	_, err = ctx.state.monitor.RegisterInvokeTransform(ctx.ctx, cb)
+	return err
 }
 
 func (ctx *Context) newOutputState(elementType reflect.Type, deps ...Resource) *OutputState {
