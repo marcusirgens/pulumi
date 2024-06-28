@@ -700,8 +700,11 @@ func (t *types) bindTypeDef(token string) (Type, hcl.Diagnostics, error) {
 		// for identity. Types are interned based on their string representation, and the string representation of an
 		// object type is its token. While this doesn't affect object types directly, it breaks the interning of types
 		// that reference object types (e.g. arrays, maps, unions)
-		obj := &ObjectType{Token: token, IsOverlay: spec.IsOverlay}
-		obj.InputShape = &ObjectType{Token: token, PlainShape: obj, IsOverlay: spec.IsOverlay}
+		obj := &ObjectType{Token: token, IsOverlay: spec.IsOverlay, OverlaySupportedLanguages: spec.OverlaySupportedLanguages}
+		obj.InputShape = &ObjectType{
+			Token: token, PlainShape: obj, IsOverlay: spec.IsOverlay,
+			OverlaySupportedLanguages: spec.OverlaySupportedLanguages,
+		}
 		t.typeDefs[token] = obj
 
 		diags, err := t.bindObjectTypeDetails(path, obj, token, spec.ObjectTypeSpec)
@@ -1165,6 +1168,7 @@ func (t *types) bindObjectTypeDetails(path string, obj *ObjectType, token string
 	obj.Properties = properties
 	obj.properties = propertyMap
 	obj.IsOverlay = spec.IsOverlay
+	obj.OverlaySupportedLanguages = spec.OverlaySupportedLanguages
 
 	obj.InputShape.PackageReference = t.externalPackage()
 	obj.InputShape.Token = token
@@ -1183,6 +1187,7 @@ func (t *types) bindAnonymousObjectType(path, token string, spec ObjectTypeSpec)
 	obj := &ObjectType{}
 	obj.InputShape = &ObjectType{PlainShape: obj}
 	obj.IsOverlay = spec.IsOverlay
+	obj.OverlaySupportedLanguages = spec.OverlaySupportedLanguages
 
 	diags, err := t.bindObjectTypeDetails(path, obj, token, spec)
 	if err != nil {
@@ -1428,18 +1433,19 @@ func (t *types) bindResourceDetails(path, token string, spec ResourceSpec, decl 
 	}
 
 	*decl = Resource{
-		PackageReference:   t.externalPackage(),
-		Token:              token,
-		Comment:            spec.Description,
-		InputProperties:    inputProperties,
-		Properties:         properties,
-		StateInputs:        stateInputs,
-		Aliases:            aliases,
-		DeprecationMessage: spec.DeprecationMessage,
-		Language:           language,
-		IsComponent:        spec.IsComponent,
-		Methods:            methods,
-		IsOverlay:          spec.IsOverlay,
+		PackageReference:          t.externalPackage(),
+		Token:                     token,
+		Comment:                   spec.Description,
+		InputProperties:           inputProperties,
+		Properties:                properties,
+		StateInputs:               stateInputs,
+		Aliases:                   aliases,
+		DeprecationMessage:        spec.DeprecationMessage,
+		Language:                  language,
+		IsComponent:               spec.IsComponent,
+		Methods:                   methods,
+		IsOverlay:                 spec.IsOverlay,
+		OverlaySupportedLanguages: spec.OverlaySupportedLanguages,
 	}
 	return diags, nil
 }
@@ -1632,18 +1638,19 @@ func (t *types) bindFunctionDef(token string) (*Function, hcl.Diagnostics, error
 	}
 
 	fn := &Function{
-		PackageReference:         t.externalPackage(),
-		Token:                    token,
-		Comment:                  spec.Description,
-		Inputs:                   inputs,
-		MultiArgumentInputs:      len(spec.MultiArgumentInputs) > 0,
-		InlineObjectAsReturnType: inlineObjectAsReturnType,
-		Outputs:                  outputs,
-		ReturnType:               returnType,
-		ReturnTypePlain:          returnTypePlain,
-		DeprecationMessage:       spec.DeprecationMessage,
-		Language:                 language,
-		IsOverlay:                spec.IsOverlay,
+		PackageReference:          t.externalPackage(),
+		Token:                     token,
+		Comment:                   spec.Description,
+		Inputs:                    inputs,
+		MultiArgumentInputs:       len(spec.MultiArgumentInputs) > 0,
+		InlineObjectAsReturnType:  inlineObjectAsReturnType,
+		Outputs:                   outputs,
+		ReturnType:                returnType,
+		ReturnTypePlain:           returnTypePlain,
+		DeprecationMessage:        spec.DeprecationMessage,
+		Language:                  language,
+		IsOverlay:                 spec.IsOverlay,
+		OverlaySupportedLanguages: spec.OverlaySupportedLanguages,
 	}
 	t.functionDefs[token] = fn
 
